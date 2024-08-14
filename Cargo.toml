@@ -1,0 +1,15 @@
+[package]
+name = "trading"
+version = "0.1.0"
+edition = "2021"
+
+[net]
+git-fetch-with-cli = true
+
+[dependencies]
+aevo-rust-sdk = { git = "https://github.com/khaidarkairbek/aevo-rust-sdk.git" , rev = "60b0553711c28adf4203103f85a713649f4c5d57" }
+tokio-tungstenite = { version = "0.23.1", features = ["native-tls"] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+reqwest = { version = "0.12.5", features = ["json"] }
+dotenv = "0.15.0"
