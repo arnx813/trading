@@ -1,5 +1,7 @@
-use aevo_rust_sdk::{aevo::{self, ClientCredentials}, env::ENV}; 
+use aevo_rust_sdk::{aevo::{self, ClientCredentials}, env::ENV, ws_structs::{Fill, WsResponse, WsResponseData}}; 
 use futures::{ SinkExt, StreamExt };
+use log::{info, error};
+use env_logger; 
 use tokio::{join, sync::mpsc}; 
 use reqwest;
 use tokio_tungstenite::tungstenite::Message; 
@@ -11,9 +13,10 @@ use dotenv::dotenv;
 
 #[tokio::main]
 pub async fn main() {
+    env_logger::init();
     dotenv().ok();
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<WsResponse>();
 
     let credentials = ClientCredentials {
         signing_key : std::env::var("SIGNING_KEY").unwrap(), 
@@ -31,17 +34,31 @@ pub async fn main() {
     let client_clone = client.clone(); 
 
     let msg_read_handle = tokio::spawn( async move {
-        client_clone.read_messages(tx).await.unwrap(); 
+        let _ = client_clone.read_messages(tx).await.map_err(|e| error!("Read messages error: {}", e)); 
     });  
 
-    client.subscribe_markprice("ETH".to_string()).await.unwrap();
+    client.subscribe_book_ticker("ZRO".to_string(), "PERPETUAL".to_string()).await.unwrap();
 
     let msg_process_handle = tokio::spawn( async move {
         loop {
-            let msg = rx.recv().await; 
+            let msg = rx.recv().await;  
             match msg {
-                Some(data) => println!("The data: {:?}", data), 
-                None => {}
+                Some(WsResponse::SubscribeResponse {
+                    data: WsResponseData::BookTickerData { 
+                        timestamp, 
+                        tickers 
+                    } , 
+                    ..
+                }) => {
+                    let ticker = &tickers[0]; 
+                    let (bid_px, ask_px): (f64, f64) = (ticker.bid.price.parse().unwrap(), ticker.ask.price.parse().unwrap());
+
+                    let spread = (ask_px - bid_px) * 2.0 / (ask_px + bid_px); 
+
+                    info!("The lowest ask: {}; The highest bid: {}; The spread: {}", ask_px, bid_px, spread); 
+
+                },
+                _ => {}
             }
         }
     });
