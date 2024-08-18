@@ -2,12 +2,20 @@ use aevo_rust_sdk::{aevo::{self, ClientCredentials}, env::ENV, ws_structs::{Fill
 use futures::{ SinkExt, StreamExt };
 use log::{info, error};
 use env_logger; 
-use tokio::{join, sync::mpsc}; 
+use tokio::{join, sync::{mpsc, Mutex}}; 
 use reqwest;
 use std::{self, sync::Arc}; 
 use dotenv::dotenv; 
 use hyperliquid_rust_sdk::{BaseUrl, InfoClient, Message, Subscription}; 
 
+
+#[derive(Debug)]
+pub struct CrossExchangeState {
+    pub aevo_bid : f64, 
+    pub aevo_ask : f64, 
+    pub hl_bid : f64, 
+    pub hl_ask : f64
+}
 
 
 
@@ -35,7 +43,7 @@ pub async fn main() {
 
     let (hl_tx, mut hl_rx) = mpsc::unbounded_channel::<Message>();
 
-    hl_info_client.subscribe(Subscription::AllMids, hl_tx).await.unwrap(); 
+    hl_info_client.subscribe(Subscription::L2Book { coin: "ZRO".to_string() }, hl_tx).await.unwrap(); 
 
     let client_clone = aevo_client.clone(); 
 
@@ -44,6 +52,15 @@ pub async fn main() {
     });  
 
     aevo_client.subscribe_book_ticker("ZRO".to_string(), "PERPETUAL".to_string()).await.unwrap();
+
+    let mm_state = Arc::new(Mutex::new(CrossExchangeState {
+        aevo_bid : -1.0, 
+        aevo_ask : -1.0, 
+        hl_bid : -1.0, 
+        hl_ask : -1.0
+    })); 
+
+    let mm_state_clone = Arc::clone(&mm_state); 
 
     let msg_process_handle = tokio::spawn( async move {
         loop {
@@ -62,17 +79,34 @@ pub async fn main() {
         
                             let spread = (ask_px - bid_px) * 2.0 / (ask_px + bid_px); 
         
-                            info!("The lowest ask: {}; The highest bid: {}; The spread: {}", ask_px, bid_px, spread); 
-        
+                            //info!("The Aevo lowest ask: {}; The highest bid: {}; The spread: {}", ask_px, bid_px, spread); 
+                            {
+                                let mut state_guard = mm_state_clone.lock().await; 
+                                state_guard.aevo_ask = ask_px; 
+                                state_guard.aevo_bid = bid_px; 
+                            }
+                            info!("The MM state : {:?}", mm_state_clone); 
                         },
                         _ => {}
                     }
                 }, 
                 msg = hl_rx.recv() => {
                     match msg {
-                        Some(Message::AllMids(all_mids)) => {
-                            let all_mids = all_mids.data.mids;
-                            info!("Hyperliquid All mids : {:?}", all_mids); 
+                        Some(Message::L2Book(l2_book)) => {
+                            let l2_book = l2_book.data;
+                            if l2_book.coin == "ZRO" {
+                                let (ask_px, bid_px): (f64, f64) = (l2_book.levels[1][0].px.parse().unwrap(), l2_book.levels[0][0].px.parse().unwrap()); 
+
+                                let spread = (ask_px - bid_px) * 2.0 / (ask_px + bid_px); 
+
+                                //info!("The HL lowest ask: {}; The highest bid: {}; The spread: {}", ask_px, bid_px, spread);
+                                {
+                                    let mut state_guard = mm_state_clone.lock().await; 
+                                    state_guard.hl_ask = ask_px; 
+                                    state_guard.hl_bid = bid_px; 
+                                }
+                                info!("The MM state : {:?}", mm_state_clone); 
+                            } 
                         }, 
                         _ => {}
                     }
