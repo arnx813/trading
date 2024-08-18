@@ -50,10 +50,10 @@ pub async fn main() {
         // Log test message
         info!("Testing submit_order function");
 
-        let instrument_id = 34510; // Replace with actual instrument ID
+        let instrument_id = 36426; // Replace with actual instrument ID
         let is_buy = false; // Example: true for buy order
-        let limit_price: f64 = 3.5; // Ensure this is f64
-        let quantity: f64 = 5.0; // Ensure this is f64
+        let limit_price: f64 = 0.2; // Ensure this is f64
+        let quantity: f64 = 100.0; // Ensure this is f64
 
         // You can use None for optional parameters you want to omit
         let post_only = None; // Omitting the post_only parameter
@@ -81,19 +81,56 @@ pub async fn main() {
         error!("Error submitting order: {}", e);
     }
 
-    let client_clone = client.clone();
+    async fn edit_order(client: &Arc<aevo::AevoClient>) -> Result<(), Box<dyn std::error::Error>> {
+        // Log test message
+        info!("Testing edit order function");
 
-    let msg_read_handle = tokio::spawn(async move {
-        let _ = client_clone
-            .read_messages(tx)
-            .await
-            .map_err(|e| error!("Read messages error: {}", e));
-    });
+        let order_id = "0xdd8d85d60cfdb58e36468b2ec99203bab539620c12ec1b3a35a1d408e9833098".to_string();
+        let instrument_id = 36426; // Replace with actual instrument ID
+        let is_buy = true; // Example: true for buy order
+        let limit_price: f64 = 0.2; // Ensure this is f64
+        let quantity: f64 = 200.0; // Ensure this is f64
 
-    client
-        .subscribe_book_ticker("ZRO".to_string(), "PERPETUAL".to_string())
-        .await
-        .unwrap();
+        // You can use None for optional parameters you want to omit
+        let post_only = None; // Omitting the post_only parameter
+        let id = None; // Omitting the request ID parameter
+        let mmp = None; // Omitting the mmp parameter
+
+        let order_id = client
+            .edit_order(
+                order_id,
+                instrument_id,
+                is_buy,
+                limit_price,
+                quantity,
+                post_only,
+                id,
+                mmp,
+            )
+            .await?;
+
+        info!("Order edited with ID: {}", order_id);
+
+        Ok(())
+    }
+
+    // if let Err(e) = edit_order(&client).await {
+    //     error!("Error submitting order: {}", e);
+    // }
+
+    // let client_clone = client.clone();
+
+    // let msg_read_handle = tokio::spawn(async move {
+    //     let _ = client_clone
+    //         .read_messages(tx)
+    //         .await
+    //         .map_err(|e| error!("Read messages error: {}", e));
+    // });
+
+    // client
+    //     .subscribe_book_ticker("POPCAT".to_string(), "PERPETUAL".to_string())
+    //     .await
+    //     .unwrap();
 
     // let msg_process_handle = tokio::spawn(async move {
     //     loop {
@@ -106,7 +143,7 @@ pub async fn main() {
     //                 let ticker = &tickers[0];
     //                 let (bid_px, ask_px): (f64, f64) = (
     //                     ticker.bid.price.parse().unwrap(),
-    //                     ticker.ask.price.parse().unwrap(),   
+    //                     ticker.ask.price.parse().unwrap(),
     //                 );
 
     //                 let spread = (ask_px - bid_px) * 2.0 / (ask_px + bid_px);
