@@ -5,21 +5,20 @@ use aevo_rust_sdk::{
 };
 use dotenv::dotenv;
 use env_logger;
+use csv;
 use futures::{SinkExt, StreamExt};
 use hyperliquid_rust_sdk::{BaseUrl, InfoClient, Message, Subscription};
 use log::{error, info};
-use polars::frame::DataFrame;
-use polars::prelude::*;
-use polars::series::Series;
 use reqwest;
-use std::fs::File;
+use serde_derive::{Deserialize, Serialize};
 use std::{self, sync::Arc};
 use tokio::{
     join,
     sync::{mpsc, Mutex},
+    time::{timeout, interval,  Duration}
 };
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CrossExchangeState {
     pub aevo_bid: f64,
     pub aevo_ask: f64,
@@ -83,10 +82,8 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hl_ask: -1.0,
     }));
 
-    let mut aevo_bids = Vec::new();
-    let mut aevo_asks = Vec::new();
-    let mut hl_bids = Vec::new();
-    let mut hl_asks = Vec::new();
+    let mut writer = csv::Writer::from_path("mm_state.csv").unwrap(); 
+    let mut flush_interval = interval(Duration::from_secs(60));
 
     let mm_state_clone = Arc::clone(&mm_state);
 
@@ -107,16 +104,12 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             let spread = (ask_px - bid_px) * 2.0 / (ask_px + bid_px);
 
-                            //info!("The Aevo lowest ask: {}; The highest bid: {}; The spread: {}", ask_px, bid_px, spread);
                             {
                                 let mut state_guard = mm_state_clone.lock().await;
                                 state_guard.aevo_ask = ask_px;
                                 state_guard.aevo_bid = bid_px;
+                                writer.serialize(&*state_guard).unwrap();
                             }
-
-                            // Append data for storing in DataFrame
-                            aevo_bids.push(bid_px);
-                            aevo_asks.push(ask_px);
 
                             info!("The MM state : {:?}", mm_state_clone);
                         },
@@ -132,41 +125,29 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 let spread = (ask_px - bid_px) * 2.0 / (ask_px + bid_px);
 
-                                //info!("The HL lowest ask: {}; The highest bid: {}; The spread: {}", ask_px, bid_px, spread);
                                 {
                                     let mut state_guard = mm_state_clone.lock().await;
                                     state_guard.hl_ask = ask_px;
                                     state_guard.hl_bid = bid_px;
+                                    writer.serialize(&*state_guard).unwrap();
                                 }
-
-                                // Append data for storing in DataFrame
-                                hl_bids.push(bid_px);
-                                hl_asks.push(ask_px);
 
                                 info!("The MM state : {:?}", mm_state_clone);
                             }
                         },
                         _ => {}
                     }
-                }
+                }, 
+                _ = flush_interval.tick() => {
+                    writer.flush().unwrap();
+                    println!("CSV Flushed writer");
+                },
             }
         }
     });
 
     // Join the tasks and await their completion
     let _ = join!(msg_read_handle, msg_process_handle);
-
-    // Create a Polars DataFrame after collecting the data
-    let mut df = DataFrame::new(vec![
-        Series::new("Aevo Bids", aevo_bids),
-        Series::new("Aevo Asks", aevo_asks),
-        Series::new("HL Bids", hl_bids),
-        Series::new("HL Asks", hl_asks),
-    ])?;
-
-    // Write DataFrame to CSV
-    let mut file = File::create("mm_state.csv")?;
-    CsvWriter::new(&mut file).finish(&mut df)?;
 
     info!("MM State stored in DataFrame and written to mm_state.csv");
 
