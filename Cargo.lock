@@ -3409,6 +3409,7 @@ dependencies = [
  "aevo-rust-sdk",
  "dotenv",
  "env_logger 0.10.2",
+ "eyre",
  "futures",
  "log",
  "reqwest",
