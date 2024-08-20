@@ -174,7 +174,7 @@ pub async fn main() {
         }
     });
 
-    // join!(msg_read_handle, msg_process_handle);
+    join!(msg_read_handle, msg_process_handle);
 }
 
 

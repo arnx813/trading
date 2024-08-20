@@ -7,7 +7,7 @@ edition = "2021"
 git-fetch-with-cli = true
 
 [dependencies]
-aevo-rust-sdk = { git = "https://github.com/arnx813/aevo-rust-kit.git" }
+aevo-rust-sdk = { git = "https://github.com/khaidarkairbek/aevo-rust-sdk.git", rev = "2352407a19608edd436baa54c334b4c29f59086f"}
 tokio-tungstenite = { version = "0.23.1", features = ["native-tls"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
