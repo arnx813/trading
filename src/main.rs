@@ -1,5 +1,5 @@
 use aevo_rust_sdk::{
-    aevo::{self, ClientCredentials}, env::ENV, signature::Order, ws_structs::{Fill, WsResponse, WsResponseData}
+    aevo::{self, ClientCredentials}, env::ENV, rest::{OrderData, RestResponse}, signature::Order, ws_structs::{Fill, WsResponse, WsResponseData}
 };
 use dotenv::dotenv;
 use env_logger;
@@ -11,6 +11,21 @@ use tokio::sync::{broadcast::error, Mutex};
 use tokio::{join, sync::mpsc};
 use tokio_tungstenite::tungstenite::Message;
 use eyre::{eyre, Result};
+use serde_derive::{Deserialize, Serialize};
+use tokio::time; 
+use std::time::Duration; 
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged, rename_all = "snake_case")]
+pub enum OrderStatus {
+    Filled, 
+    Partial, 
+    Opened, 
+    Cancelled, 
+    Expired, 
+    Rejected, 
+    StopOrder
+}
 
 pub struct MMState {
     pub bid_resting_order : Option<RestingOrder>, 
@@ -21,8 +36,9 @@ pub struct RestingOrder {
     pub px : f64, 
     pub sz : f64, 
     pub order_id : String, 
-    pub verified : bool, 
-    pub filled : bool
+    pub status : OrderStatus, 
+    pub filled : f64, 
+    pub is_buy : bool
 }
 
 #[tokio::main]
@@ -32,48 +48,36 @@ pub async fn main() {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<WsResponse>();
 
-    let signing_key = std::env::var("SIGNING_KEY").unwrap();
-    let wallet_address = std::env::var("WALLET_ADDRESS").unwrap();
-    let api_key = std::env::var("API_KEY").unwrap();
-    let api_secret = std::env::var("API_SECRET").unwrap();
-
+    // Aevo Initialization
     let credentials = ClientCredentials {
-        signing_key,
-        wallet_address,
+        signing_key : std::env::var("SIGNING_KEY").unwrap(),
+        wallet_address : std::env::var("WALLET_ADDRESS").unwrap(),
         wallet_private_key: None,
-        api_key,
-        api_secret,
+        api_key : std::env::var("API_KEY").unwrap(),
+        api_secret : std::env::var("API_SECRET").unwrap(),
     };
+    let client = Arc::new(aevo::AevoClient::new(Some(credentials), ENV::MAINNET).await.unwrap()); 
 
-    let client = Arc::new(aevo::AevoClient::new(Some(credentials), ENV::MAINNET)
-        .await
-        .unwrap()); 
-
+    // Spawn Aevo Websockets Message reading task
     let client_clone = client.clone();
-
     let msg_read_handle = tokio::spawn(async move {
-        let _ = client_clone
-            .read_messages(tx)
-            .await
-            .map_err(|e| error!("Read messages error: {}", e));
+        let _ = client_clone.read_messages(tx).await.map_err(|e| error!("Read messages error: {}", e));
     });
 
-    client.subscribe_book_ticker("POPCAT".to_string(), "PERPETUAL".to_string())
-        .await
-        .unwrap();
+    // Relevant Subscriptions
+    client.subscribe_book_ticker("POPCAT".to_string(), "PERPETUAL".to_string()).await.unwrap();
+    client.subscribe_fills().await.unwrap(); 
 
+    // MM State Tracking
     let mm_state = Arc::new(Mutex::new(MMState{
         bid_resting_order : None, 
         ask_resting_order : None,
     }));
 
     let mm_state_clone = mm_state.clone(); 
-
     let client_clone = client.clone();
-
     let msg_process_handle = tokio::spawn(async move {
         loop {
-            // info!("{}", edit_order_id);
             let msg = rx.recv().await;
             match msg {
                 Some(WsResponse::SubscribeResponse {
@@ -95,29 +99,59 @@ pub async fn main() {
 
                     // Calculate the adjusted bid price
                     let adjusted_bid_px = (0.99 * bid_px * 10_000.0).round() / 10_000.0;
-                    info!("editing bid to {}", adjusted_bid_px);
-
                     {
                         let mut state_guard = mm_state_clone.lock().await; 
                         let new_resting_order: Result<RestingOrder> =  match &state_guard.bid_resting_order {
                             None => {
-                                submit_order(&client_clone).await
+                                submit_order(
+                                    &client_clone, 
+                                    ticker.instrument_id.parse().unwrap(), 
+                                    true, 
+                                    adjusted_bid_px, 
+                                    50.0
+                                ).await
                             }, 
                             Some(RestingOrder {
                                 order_id, 
                                 px, 
                                 sz, 
-                                verified, 
-                                filled
+                                status, 
+                                filled, 
+                                is_buy
                             })=> {
-                                if !filled {
-                                    edit_order(
-                                        &client_clone, 
-                                        order_id.to_string(), 
-                                        adjusted_bid_px
-                                    ).await
-                                } else {
-                                    Err(eyre!("Order Filled Already"))
+                                match status {
+                                    OrderStatus::Opened => {
+                                        edit_order(
+                                            &client, 
+                                            order_id, 
+                                            ticker.instrument_id.parse().unwrap(), 
+                                            true, 
+                                            adjusted_bid_px, 
+                                            50.0
+                                        ).await
+                                    }, 
+                                    OrderStatus::Filled => {
+                                        Err(eyre!("Order Filled Already"))
+                                    }, 
+                                    OrderStatus::Partial => {
+                                        edit_order(
+                                            &client, 
+                                            order_id, 
+                                            ticker.instrument_id.parse().unwrap(), 
+                                            true, 
+                                            adjusted_bid_px, 
+                                            100.0
+                                        ).await
+                                    },
+                                    _ => {  // Order was Rejected, Expired or Cancelled
+                                        submit_order(
+                                            &client_clone, 
+                                            ticker.instrument_id.parse().unwrap(), 
+                                            true, 
+                                            adjusted_bid_px, 
+                                            50.0
+                                        ).await
+                                    },
                                 }
                             }
                         }; 
@@ -131,36 +165,46 @@ pub async fn main() {
                     }
 
                 },
-                Some(WsResponse::PublishResponse {
-                    data: WsResponseData::CreateEditOrderData {
-                        order_id,
-                        account,
-                        instrument_id,
-                        instrument_name,
-                        instrument_type,
-                        expiry,
-                        strike,
-                        option_type,
-                        order_type,
-                        order_status,
-                        side,
-                        amount,
-                        price,
-                        filled,
-                        initial_margin,
-                        avg_price,
-                        created_timestamp,
-                        timestamp,
-                        system_type,
-                    },
-                    ..
+                Some(WsResponse::SubscribeResponse {
+                    data: WsResponseData::FillsData { 
+                        timestamp, 
+                        fill: Fill { 
+                            trade_id, 
+                            order_id, 
+                            instrument_id,
+                            instrument_name, 
+                            instrument_type, 
+                            price, 
+                            side, 
+                            fees, 
+                            filled, 
+                            order_status, 
+                            liquidity, 
+                            created_timestamp, 
+                            system_type 
+                        } 
+                    }, 
+                    .. 
                 }) => {
-                    {
-                        let mut mm_state_guard = mm_state_clone.lock().await; 
-                        if let Some(order) = &mut mm_state_guard.bid_resting_order {
-                            if order.order_id == order_id {
-                                order.verified = true; 
-                                info!("The order {} is verified", order_id)
+                    let is_buy = side == "buy"; 
+                    {   
+                        let mut state_guard = mm_state_clone.lock().await; 
+                        match is_buy {
+                            true => {
+                                if let Some(order) = &mut state_guard.bid_resting_order {
+                                    if order_id == order.order_id {
+                                        order.filled = filled.parse().unwrap(); 
+                                        order.status = serde_json::from_str(&order_status).unwrap(); 
+                                    }
+                                }
+                            }, 
+                            false => {
+                                if let Some(order) = &mut state_guard.ask_resting_order {
+                                    if order_id == order.order_id {
+                                        order.filled = filled.parse().unwrap(); 
+                                        order.status = serde_json::from_str(&order_status).unwrap(); 
+                                    }
+                                }
                             }
                         }
                     }
@@ -170,7 +214,7 @@ pub async fn main() {
 
             }
 
-            
+            time::sleep(Duration::from_secs(1)).await; 
         }
     });
 
@@ -180,84 +224,105 @@ pub async fn main() {
 
 async fn submit_order(
     client: &Arc<aevo::AevoClient>,
+    instrument_id: u64, 
+    is_buy: bool, 
+    limit_price: f64, 
+    quantity: f64
 ) -> Result<RestingOrder> {
-    // Log test message
 
-    let instrument_id = 36426; // Replace with actual instrument ID
-    let is_buy = true; // Example: true for buy order
-    let limit_price: f64 = 0.2; // Ensure this is f64
-    let quantity: f64 = 100.0; // Ensure this is f64
-
-    // You can use None for optional parameters you want to omit
-    let post_only = None; // Omitting the post_only parameter
-    let id = None; // Omitting the request ID parameter
-    let mmp = None; // Omitting the mmp parameter
-
-    let order_id = client
-        .create_order(
-            instrument_id,
-            is_buy,
-            limit_price,
-            quantity,
-            post_only,
-            id,
-            mmp,
+    let response = client
+        .rest_create_order(
+            instrument_id, 
+            is_buy, 
+            limit_price, 
+            quantity, 
+            None
         )
-        .await?;
+        .await?; 
 
-    info!("Order created with ID: {}", order_id);
+    match response {
+        RestResponse::CreateOrder( OrderData { 
+            order_id, 
+            side,
+            amount, 
+            price, 
+            avg_price, 
+            filled, 
+            order_status,  
+            ..
+        }) => {
+            info!("Order created with ID: {}, order status {}", order_id, order_status);
+            Ok(RestingOrder{
+                px : price.parse().unwrap(), 
+                sz : amount.parse().unwrap(), 
+                order_id : order_id, 
+                status : parse_order_status(&order_status).unwrap(),
+                filled : filled.parse().unwrap(), 
+                is_buy : is_buy
+            })
 
-    Ok(RestingOrder{
-        px : limit_price, 
-        sz : quantity, 
-        order_id : order_id, 
-        verified : false, 
-        filled : false
-    })
+        }, 
+        _ => {
+            Err(eyre!("Unexpected Create Rest Response : {:?}", response))
+        }
+    }
 }
 
 async fn edit_order(
     client: &Arc<aevo::AevoClient>,
-    edit_order_id: String,
-    new_bid_price: f64,
+    order_id : &String,
+    instrument_id: u64, 
+    is_buy: bool, 
+    limit_price: f64, 
+    quantity: f64
 ) -> Result<RestingOrder> {
 
-    let instrument_id = 36426; // Replace with actual instrument ID
-    let is_buy = true; // Example: true for buy order
-    let limit_price: f64 = 0.2; // Ensure this is f64
-    let quantity: f64 = 130.0; // Ensure this is f64
-
-    // You can use None for optional parameters you want to omit
-    let post_only = None; // Omitting the post_only parameter
-    let id = None; // Omitting the request ID parameter
-    let mmp = None; // Omitting the mmp parameter
-
-    // Log all variables in one line
-    info!(
-    "Calling edit_order with params - order_id_string: {}, instrument_id: {}, is_buy: {}, new_bid_price: {}, quantity: {}, post_only: {:?}, id: {:?}, mmp: {:?}",
-    edit_order_id, instrument_id, is_buy, new_bid_price, quantity, post_only, id, mmp
-    );
-
-    let new_order_id = client
-        .edit_order(
-            edit_order_id,
-            instrument_id,
-            is_buy,
-            new_bid_price,
-            quantity,
-            post_only,
-            id,
-            mmp,
+    let response = client
+        .rest_edit_order(
+            order_id, 
+            instrument_id, 
+            is_buy, 
+            limit_price, 
+            quantity, 
+            None
         )
-        .await?;
-
-    info!("Updating Order ID to: {}", new_order_id);
-
-    Ok(RestingOrder{
-        px : limit_price, 
-        sz : quantity, 
-        order_id : new_order_id, 
-        verified : false, 
-        filled : false
-    })
+        .await?; 
+    
+    match response {
+        RestResponse::EditOrder(OrderData{ 
+            order_id, 
+            side,
+            amount, 
+            price, 
+            avg_price, 
+            filled, 
+            order_status,  
+            ..
+        }) => {
+            Ok(RestingOrder{
+                px : price.parse().unwrap(), 
+                sz : amount.parse().unwrap(), 
+                order_id : order_id, 
+                status : parse_order_status(&order_status).unwrap(),
+                filled : filled.parse().unwrap(), 
+                is_buy : is_buy
+            })
+        }, 
+        _ => {
+            Err(eyre!("Unexpected Edit Rest Response : {:?}", response))
+        }
+    }
 }
+
+fn parse_order_status (status: &str) -> Result<OrderStatus> {
+    match status.to_lowercase().as_str() {
+        "filled" => Ok(OrderStatus::Filled),
+        "partial" => Ok(OrderStatus::Partial),
+        "opened" => Ok(OrderStatus::Opened),
+        "cancelled" => Ok(OrderStatus::Cancelled),
+        "expired" => Ok(OrderStatus::Expired),
+        "rejected" => Ok(OrderStatus::Rejected),
+        "stop_order" => Ok(OrderStatus::StopOrder),
+        _ => Err(eyre!("Order Status parsing error")),
+    }
+}   
