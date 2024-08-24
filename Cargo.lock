@@ -47,7 +47,7 @@ dependencies = [
 [[package]]
 name = "aevo-rust-sdk"
 version = "0.1.0"
-source = "git+https://github.com/khaidarkairbek/aevo-rust-sdk.git?rev=5006d2cb7634b6123b8e51c56abfe4acf2186062#5006d2cb7634b6123b8e51c56abfe4acf2186062"
+source = "git+https://github.com/khaidarkairbek/aevo-rust-sdk.git?rev=e5e8e6ffa2b5e2ec0fbc9ddae57e445d5272b418#e5e8e6ffa2b5e2ec0fbc9ddae57e445d5272b418"
 dependencies = [
  "alloy",
  "chrono",
@@ -4928,8 +4928,10 @@ name = "trading"
 version = "0.1.0"
 dependencies = [
  "aevo-rust-sdk",
+ "chrono",
  "dotenv",
  "env_logger 0.10.2",
+ "ethers",
  "eyre",
  "futures",
  "hyperliquid_rust_sdk",

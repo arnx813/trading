@@ -1,328 +1,370 @@
-use aevo_rust_sdk::{
-    aevo::{self, ClientCredentials}, env::ENV, rest::{OrderData, RestResponse}, signature::Order, ws_structs::{Fill, WsResponse, WsResponseData}
-};
+use aevo_hl_arb::XArb;
+use aevo_rust_sdk::aevo::{AevoClient, ClientCredentials}; 
+use aevo_hl_xmm::XMM; 
 use dotenv::dotenv;
-use env_logger;
-use futures::{SinkExt, StreamExt};
-use log::{error, info};
-use reqwest;
-use std::{self, sync::Arc};
-use tokio::sync::{broadcast::error, Mutex};
-use tokio::{join, sync::mpsc};
-use tokio_tungstenite::tungstenite::Message;
-use eyre::{eyre, Result};
-use serde_derive::{Deserialize, Serialize};
-use tokio::time; 
-use std::time::Duration; 
+mod aevo_hl_xmm;
+mod aevo_hl_arb;
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged, rename_all = "snake_case")]
-pub enum OrderStatus {
-    Filled, 
-    Partial, 
-    Opened, 
-    Cancelled, 
-    Expired, 
-    Rejected, 
-    StopOrder
-}
-
-pub struct MMState {
-    pub bid_resting_order : Option<RestingOrder>, 
-    pub ask_resting_order : Option<RestingOrder>,
-}
-
-pub struct RestingOrder {
-    pub px : f64, 
-    pub sz : f64, 
-    pub order_id : String, 
-    pub status : OrderStatus, 
-    pub filled : f64, 
-    pub is_buy : bool
+pub struct HLCredentials {
+    pub api_key : String, 
+    pub api_wallet_address : String, 
 }
 
 #[tokio::main]
 pub async fn main() {
     env_logger::init();
-    dotenv().ok(); 
-
-    let (tx, mut rx) = mpsc::unbounded_channel::<WsResponse>();
-
-    // Aevo Initialization
-    let credentials = ClientCredentials {
-        signing_key : std::env::var("SIGNING_KEY").unwrap(),
-        wallet_address : std::env::var("WALLET_ADDRESS").unwrap(),
-        wallet_private_key: None,
-        api_key : std::env::var("API_KEY").unwrap(),
-        api_secret : std::env::var("API_SECRET").unwrap(),
+    dotenv().ok();
+    let aevo_credentials = ClientCredentials {
+        signing_key : std::env::var("SIGNING_KEY").unwrap(), 
+        wallet_address : std::env::var("WALLET_ADDRESS").unwrap(), 
+        api_secret : std::env::var("API_SECRET").unwrap(), 
+        api_key : std::env::var("API_KEY").unwrap(), 
+        wallet_private_key : None
     };
-    let client = Arc::new(aevo::AevoClient::new(Some(credentials), ENV::MAINNET).await.unwrap()); 
 
-    // Spawn Aevo Websockets Message reading task
-    let client_clone = client.clone();
-    let msg_read_handle = tokio::spawn(async move {
-        let _ = client_clone.read_messages(tx).await.map_err(|e| error!("Read messages error: {}", e));
-    });
+    let hl_credentials = HLCredentials {
+        api_key : std::env::var("HL_API_PRIVATE_KEY").unwrap(),
+        api_wallet_address : std::env::var("HL_API_WALLET_ADDRESS").unwrap(),
+    }; 
 
-    // Relevant Subscriptions
-    client.subscribe_book_ticker("POPCAT".to_string(), "PERPETUAL".to_string()).await.unwrap();
-    client.subscribe_fills().await.unwrap(); 
+    let mut cross_arb = XArb::new(
+        aevo_credentials, 
+        hl_credentials, 
+        "POPCAT".to_string(), 
+        100.0, 
+        36426,
+    ).await; 
 
-    // MM State Tracking
-    let mm_state = Arc::new(Mutex::new(MMState{
-        bid_resting_order : None, 
-        ask_resting_order : None,
-    }));
+    cross_arb.start().await; 
+}
 
-    let mm_state_clone = mm_state.clone(); 
-    let client_clone = client.clone();
-    let msg_process_handle = tokio::spawn(async move {
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+    use env_logger; 
+    use dotenv::dotenv; 
+    use tokio::{sync::{broadcast::error, mpsc}, test, time::sleep}; 
+    use aevo_rust_sdk::{aevo::{AevoClient, ClientCredentials}, env, rest::{OrderData, RestResponse}, ws_structs::{WsResponse, WsResponseData}, };  
+    use chrono::prelude::*; 
+    use log::{error, info}; 
+    use hyperliquid_rust_sdk::{ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, InfoClient, Message, Subscription}; 
+    use ethers::signers::LocalWallet;
+
+    #[test]
+    async fn test_aevo_rest_open_order() {
+        env_logger::init(); 
+        dotenv().ok();
+        let credentials = ClientCredentials {
+            signing_key : std::env::var("SIGNING_KEY").unwrap(), 
+            wallet_address : std::env::var("WALLET_ADDRESS").unwrap(), 
+            api_secret : std::env::var("API_SECRET").unwrap(), 
+            api_key : std::env::var("API_KEY").unwrap(), 
+            wallet_private_key : None
+        };
+        
+        let mut client = AevoClient::new(Some(credentials), env::ENV::MAINNET).await.unwrap(); 
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let response = client.rest_create_order(
+            1, 
+            true, 
+            2400.0, 
+            0.01, 
+            None
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response); 
+
+        match response {
+            RestResponse::CreateOrder { .. } => {
+                println!("The rest order response latency is : {}", time_after - time_before); 
+            }, 
+            _ => {
+                panic!("Not CreateOrder type: {:?}", response)
+            }
+        }
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let response = client.rest_create_order(
+            1, 
+            true, 
+            2400.0, 
+            0.01, 
+            None
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response); 
+
+        match response {
+            RestResponse::CreateOrder { .. } => {
+                println!("The rest order response latency is : {}", time_after - time_before); 
+            }, 
+            _ => {
+                panic!("Not CreateOrder type: {:?}", response)
+            }
+        }
+
+        sleep(Duration::from_secs(60)).await; 
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let response = client.rest_create_order(
+            1, 
+            true, 
+            2400.0, 
+            0.01, 
+            None
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response); 
+
+        match response {
+            RestResponse::CreateOrder { .. } => {
+                println!("The rest order response latency is : {}", time_after - time_before); 
+            }, 
+            _ => {
+                panic!("Not CreateOrder type: {:?}", response)
+            }
+        }
+    }
+
+    #[test]
+    async fn test_aevo_rest_edit_order() {
+        env_logger::init(); 
+        dotenv().ok();
+        let credentials = ClientCredentials {
+            signing_key : std::env::var("SIGNING_KEY").unwrap(), 
+            wallet_address : std::env::var("WALLET_ADDRESS").unwrap(), 
+            api_secret : std::env::var("API_SECRET").unwrap(), 
+            api_key : std::env::var("API_KEY").unwrap(), 
+            wallet_private_key : None
+        };
+        
+        let mut client = Arc::new(AevoClient::new(Some(credentials), env::ENV::MAINNET).await.unwrap()); 
+        client.subscribe_fills().await.unwrap();
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let order_id = "0x894258dbff96e94e874359d525e7e5423501accd764d931a697852fe5ab3ece6".to_string(); 
+        let response = client.rest_edit_order(
+            &order_id,
+            1, 
+            true, 
+            2758.0, 
+            0.02, 
+            None
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response); 
+
+        match response {
+            RestResponse::EditOrder { .. } => {
+                println!("The rest order response latency is : {}", time_after - time_before); 
+            }, 
+            _ => {
+                panic!("Not CreateOrder type: {:?}", response)
+            }
+        }
+
+        let (aevo_tx, mut aevo_rx) = mpsc::unbounded_channel::<WsResponse>();
+        let aevo_client = client.clone(); 
+        tokio::spawn(async move {
+            let _ = aevo_client.read_messages(aevo_tx).await.map_err(|e| error!("Read messages error: {}", e));
+        });
+ 
+
         loop {
-            let msg = rx.recv().await;
+            let msg = aevo_rx.recv().await; 
+
             match msg {
-                Some(WsResponse::SubscribeResponse {
-                    data: WsResponseData::BookTickerData { timestamp, tickers },
-                    ..
-                }) => {
-                    let ticker = &tickers[0];
-                    let (bid_px, ask_px): (f64, f64) = (
-                        ticker.bid.price.parse().unwrap(),
-                        ticker.ask.price.parse().unwrap(),
-                    );
-
-                    let spread = (ask_px - bid_px) * 2.0 / (ask_px + bid_px);
-
-                    info!(
-                        "The lowest ask: {}; The highest bid: {}; The spread: {}",
-                        ask_px, bid_px, spread
-                    );
-
-                    // Calculate the adjusted bid price
-                    let adjusted_bid_px = (0.99 * bid_px * 10_000.0).round() / 10_000.0;
-                    {
-                        let mut state_guard = mm_state_clone.lock().await; 
-                        let new_resting_order: Result<RestingOrder> =  match &state_guard.bid_resting_order {
-                            None => {
-                                submit_order(
-                                    &client_clone, 
-                                    ticker.instrument_id.parse().unwrap(), 
-                                    true, 
-                                    adjusted_bid_px, 
-                                    50.0
-                                ).await
-                            }, 
-                            Some(RestingOrder {
-                                order_id, 
-                                px, 
-                                sz, 
-                                status, 
-                                filled, 
-                                is_buy
-                            })=> {
-                                match status {
-                                    OrderStatus::Opened => {
-                                        edit_order(
-                                            &client, 
-                                            order_id, 
-                                            ticker.instrument_id.parse().unwrap(), 
-                                            true, 
-                                            adjusted_bid_px, 
-                                            50.0
-                                        ).await
-                                    }, 
-                                    OrderStatus::Filled => {
-                                        Err(eyre!("Order Filled Already"))
-                                    }, 
-                                    OrderStatus::Partial => {
-                                        edit_order(
-                                            &client, 
-                                            order_id, 
-                                            ticker.instrument_id.parse().unwrap(), 
-                                            true, 
-                                            adjusted_bid_px, 
-                                            100.0
-                                        ).await
-                                    },
-                                    _ => {  // Order was Rejected, Expired or Cancelled
-                                        submit_order(
-                                            &client_clone, 
-                                            ticker.instrument_id.parse().unwrap(), 
-                                            true, 
-                                            adjusted_bid_px, 
-                                            50.0
-                                        ).await
-                                    },
-                                }
-                            }
-                        }; 
-
-                        match new_resting_order {
-                            Ok(resting_order) => {
-                                state_guard.bid_resting_order = Some(resting_order);
-                            }, 
-                            Err(e) => error!("{}", e)
-                        }
-                    }
-
-                },
                 Some(WsResponse::SubscribeResponse {
                     data: WsResponseData::FillsData { 
                         timestamp, 
-                        fill: Fill { 
-                            trade_id, 
-                            order_id, 
-                            instrument_id,
-                            instrument_name, 
-                            instrument_type, 
-                            price, 
-                            side, 
-                            fees, 
-                            filled, 
-                            order_status, 
-                            liquidity, 
-                            created_timestamp, 
-                            system_type 
-                        } 
+                        fill
                     }, 
                     .. 
                 }) => {
-                    let is_buy = side == "buy"; 
-                    {   
-                        let mut state_guard = mm_state_clone.lock().await; 
-                        match is_buy {
-                            true => {
-                                if let Some(order) = &mut state_guard.bid_resting_order {
-                                    if order_id == order.order_id {
-                                        order.filled = filled.parse().unwrap(); 
-                                        order.status = serde_json::from_str(&order_status).unwrap(); 
-                                    }
-                                }
-                            }, 
-                            false => {
-                                if let Some(order) = &mut state_guard.ask_resting_order {
-                                    if order_id == order.order_id {
-                                        order.filled = filled.parse().unwrap(); 
-                                        order.status = serde_json::from_str(&order_status).unwrap(); 
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    info!("The fill response : {:?}", fill)
                 },
-                
                 _ => {}
-
             }
-
-            time::sleep(Duration::from_secs(1)).await; 
         }
-    });
+    }
 
-    join!(msg_read_handle, msg_process_handle);
-}
+    #[test]
+    async fn test_ws_open_order() {
+        env_logger::init(); 
+        dotenv().ok();
+        let (aevo_tx, mut aevo_rx) = mpsc::unbounded_channel::<WsResponse>();
+        let credentials = ClientCredentials {
+            signing_key : std::env::var("SIGNING_KEY").unwrap(), 
+            wallet_address : std::env::var("WALLET_ADDRESS").unwrap(), 
+            api_secret : std::env::var("API_SECRET").unwrap(), 
+            api_key : std::env::var("API_KEY").unwrap(), 
+            wallet_private_key : None
+        };
+        
+        let mut aevo_client = Arc::new(AevoClient::new(Some(credentials), env::ENV::MAINNET).await.unwrap()); 
 
+        let aevo_client_clone = aevo_client.clone(); 
+        tokio::spawn(async move {
+            let _ = aevo_client_clone.read_messages(aevo_tx).await.map_err(|e| error!("Read messages error: {}", e));
+        });
 
-async fn submit_order(
-    client: &Arc<aevo::AevoClient>,
-    instrument_id: u64, 
-    is_buy: bool, 
-    limit_price: f64, 
-    quantity: f64
-) -> Result<RestingOrder> {
-
-    let response = client
-        .rest_create_order(
-            instrument_id, 
-            is_buy, 
-            limit_price, 
-            quantity, 
+        let time_before = Utc::now().timestamp_micros(); 
+        let order_id = aevo_client.create_order(
+            1, 
+            true, 
+            2400.0, 
+            0.01, 
+            None, 
+            None, 
             None
-        )
-        .await?; 
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
 
-    match response {
-        RestResponse::CreateOrder( OrderData { 
-            order_id, 
-            side,
-            amount, 
-            price, 
-            avg_price, 
-            filled, 
-            order_status,  
-            ..
-        }) => {
-            info!("Order created with ID: {}, order status {}", order_id, order_status);
-            Ok(RestingOrder{
-                px : price.parse().unwrap(), 
-                sz : amount.parse().unwrap(), 
-                order_id : order_id, 
-                status : parse_order_status(&order_status).unwrap(),
-                filled : filled.parse().unwrap(), 
-                is_buy : is_buy
-            })
+        println!("The ws order send latency is : {}", time_after - time_before);  
 
-        }, 
-        _ => {
-            Err(eyre!("Unexpected Create Rest Response : {:?}", response))
-        }
+        loop {
+            let msg = aevo_rx.recv().await; 
+            match msg {
+                Some(WsResponse::PublishResponse { data: WsResponseData::CreateEditOrderData { 
+                    order_id, 
+                    timestamp, .. 
+                    }, 
+                    .. 
+                }) => {
+                    let time_rn = Utc::now().timestamp_micros(); 
+                    let timestamp_micros = timestamp.parse::<i64>().unwrap() / 1000; 
+                    println!("The aevo reach latency is : {}", timestamp_micros - time_after);  
+                    println!("The latency from aevo to os : {}", time_rn - timestamp_micros); 
+                    println!("The total latency from sending to receiving response : {}", time_rn - time_before); 
+                    break
+                }, 
+                _ => {}
+            }
+        } 
+
     }
-}
 
-async fn edit_order(
-    client: &Arc<aevo::AevoClient>,
-    order_id : &String,
-    instrument_id: u64, 
-    is_buy: bool, 
-    limit_price: f64, 
-    quantity: f64
-) -> Result<RestingOrder> {
+    #[test]
+    async fn test_hl_rest_open_order() {
+        env_logger::init(); 
+        dotenv().ok();
 
-    let response = client
-        .rest_edit_order(
-            order_id, 
-            instrument_id, 
-            is_buy, 
-            limit_price, 
-            quantity, 
+        let hl_signer: LocalWallet = std::env::var("HL_API_PRIVATE_KEY").unwrap().parse().unwrap();
+        let mut client = ExchangeClient::new(None, hl_signer, None, None, None).await.unwrap();
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let response = client.order(
+            ClientOrderRequest{
+                asset : "POPCAT".to_string(), 
+                is_buy : true, 
+                reduce_only : false, 
+                limit_px: 0.75,
+                sz : 100.0, 
+                cloid : None, 
+                order_type : ClientOrder::Limit(
+                    ClientLimit {
+                        tif: "Ioc".to_string(),  // market order is agressive limit order with IOC TIF
+                    }
+                )
+            }, 
             None
-        )
-        .await?; 
-    
-    match response {
-        RestResponse::EditOrder(OrderData{ 
-            order_id, 
-            side,
-            amount, 
-            price, 
-            avg_price, 
-            filled, 
-            order_status,  
-            ..
-        }) => {
-            Ok(RestingOrder{
-                px : price.parse().unwrap(), 
-                sz : amount.parse().unwrap(), 
-                order_id : order_id, 
-                status : parse_order_status(&order_status).unwrap(),
-                filled : filled.parse().unwrap(), 
-                is_buy : is_buy
-            })
-        }, 
-        _ => {
-            Err(eyre!("Unexpected Edit Rest Response : {:?}", response))
-        }
+        ).await; 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response); 
+        println!("The rest order creation latency is : {}", time_after - time_before);   
+    }
+
+    #[test]
+    async fn test_aevo_rest_open_hl_open() {
+        env_logger::init(); 
+        dotenv().ok();
+
+        let (aevo_tx, mut aevo_rx) = mpsc::unbounded_channel::<WsResponse>();
+
+        let credentials = ClientCredentials {
+            signing_key : std::env::var("SIGNING_KEY").unwrap(), 
+            wallet_address : std::env::var("WALLET_ADDRESS").unwrap(), 
+            api_secret : std::env::var("API_SECRET").unwrap(), 
+            api_key : std::env::var("API_KEY").unwrap(), 
+            wallet_private_key : None
+        };
+        
+        let mut aevo_client = Arc::new(AevoClient::new(Some(credentials), env::ENV::MAINNET).await.unwrap());
+
+        let aevo_client_clone = aevo_client.clone(); 
+        tokio::spawn(async move {
+            let _ = aevo_client_clone.read_messages(aevo_tx).await.map_err(|e| error!("Read messages error: {}", e));
+        });
+        aevo_client.subscribe_fills().await.unwrap(); 
+
+        let hl_signer: LocalWallet = std::env::var("HL_API_PRIVATE_KEY").unwrap().parse().unwrap();
+        let mut hl_exchange_client = ExchangeClient::new(None, hl_signer, None, None, None).await.unwrap();
+        let mut hl_info_client = InfoClient::new(None, None).await.unwrap(); 
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let response = aevo_client.rest_create_market_order(
+            1, 
+            true,
+            0.01,
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response);
+        println!("The rest order creation latency is : {}", time_after - time_before);   
+
+        let aevo_order_id = match response {
+            RestResponse::CreateOrder(OrderData{
+                order_id, 
+                ..
+            })=> {
+                order_id
+            }, 
+            _ => unreachable!()
+        }; 
+
+        loop {
+            let msg = aevo_rx.recv().await; 
+            match msg {
+                Some(WsResponse::SubscribeResponse {
+                    data: WsResponseData::FillsData { 
+                        timestamp, 
+                        fill
+                    }, 
+                    .. 
+                }) => {
+                    if fill.order_id == aevo_order_id {
+                        info!("Filled size : {}, price : {}", fill.filled, fill.price); 
+                        let time_before = Utc::now().timestamp_micros(); 
+                        let response = hl_exchange_client.order(
+                            ClientOrderRequest{
+                                asset : "ETH".to_string(), 
+                                is_buy : false, 
+                                reduce_only : false, 
+                                limit_px: 2400.0,
+                                sz : 0.01, 
+                                cloid : None, 
+                                order_type : ClientOrder::Limit(
+                                    ClientLimit {
+                                        tif: "Ioc".to_string(),  // market order is agressive limit order with IOC TIF
+                                    }
+                                )
+                            }, 
+                            None
+                        ).await; 
+                        let time_after = Utc::now().timestamp_micros(); 
+                        println!("Response: {:?}", response);
+                        println!("The rest order creation latency is : {}", time_after - time_before);   
+                        break;
+                    }   
+                },
+                _ => {}
+            }
+        }   
     }
 }
-
-fn parse_order_status (status: &str) -> Result<OrderStatus> {
-    match status.to_lowercase().as_str() {
-        "filled" => Ok(OrderStatus::Filled),
-        "partial" => Ok(OrderStatus::Partial),
-        "opened" => Ok(OrderStatus::Opened),
-        "cancelled" => Ok(OrderStatus::Cancelled),
-        "expired" => Ok(OrderStatus::Expired),
-        "rejected" => Ok(OrderStatus::Rejected),
-        "stop_order" => Ok(OrderStatus::StopOrder),
-        _ => Err(eyre!("Order Status parsing error")),
-    }
-}   
