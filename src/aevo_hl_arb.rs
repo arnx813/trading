@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use aevo_rust_sdk::{
     aevo::{self, AevoClient, ClientCredentials as AevoClientCredentials}, 
     env::ENV, 
@@ -14,7 +14,7 @@ use hyperliquid_rust_sdk::{
 };
 use ethers::signers::{LocalWallet, Signer};
 use log::{error, info};
-use tokio::sync::mpsc; 
+use tokio::{sync::mpsc, time}; 
 use crate::HLCredentials;
 
 pub struct XArb {
@@ -25,7 +25,8 @@ pub struct XArb {
     hl_exchange_client : HLExchangeClient, 
     asset : String, 
     max_size : f64, 
-    instrument_id : u64
+    instrument_id : u64, 
+    min_delta_bps : u16
 }
 
 #[derive(Debug)]
@@ -37,7 +38,14 @@ pub struct ExchangeState {
 }
 
 impl XArb {
-    pub async fn new(aevo_credentials: AevoClientCredentials, hl_credentials: HLCredentials, asset: String, max_size: f64, instrument_id: u64) -> XArb {
+    pub async fn new(
+        aevo_credentials: AevoClientCredentials, 
+        hl_credentials: HLCredentials, 
+        asset: String, 
+        max_size: f64, 
+        instrument_id: u64,
+        min_delta_bps: u16
+    ) -> XArb {
         let aevo_client = AevoClient::new(Some(aevo_credentials), ENV::MAINNET).await.unwrap();
         let hl_info_client = HLInfoClient::new(None, None).await.unwrap(); 
         let hl_signer: LocalWallet = hl_credentials.api_key.parse().unwrap();
@@ -61,7 +69,8 @@ impl XArb {
             hl_exchange_client,
             asset, 
             max_size, 
-            instrument_id
+            instrument_id, 
+            min_delta_bps
         }
     }
 
@@ -73,6 +82,14 @@ impl XArb {
         tokio::spawn(async move {
             let _ = aevo_client.read_messages(aevo_tx).await.map_err(|e| error!("Read messages error: {}", e));
         });
+
+        let aevo_client = self.aevo_client.clone();
+        tokio::spawn(async move {
+            loop {
+                let _ = aevo_client.ping().await; 
+                time::sleep(Duration::from_secs(60)).await;   //ping every 60 secs to keep ws connection alive
+            }
+        }); 
 
         self.aevo_client.subscribe_book_ticker(self.asset.clone(), "PERPETUAL".to_string()).await.unwrap();
         self.hl_info_client.subscribe(Subscription::L2Book { coin: self.asset.clone() }, hl_tx.clone()).await.unwrap();
@@ -123,12 +140,15 @@ impl XArb {
     }
 
     async fn submit_orders(&mut self ) {
-        if self.aevo_state.ask_px < self.hl_state.bid_px && self.aevo_state.buy_open_sz < self.max_size {
+        if ((self.hl_state.bid_px - self.aevo_state.ask_px) / self.aevo_state.ask_px * 10_000.0)  > self.min_delta_bps as f64 && self.aevo_state.buy_open_sz < self.max_size {
             let order_amount = self.max_size - self.aevo_state.buy_open_sz; 
-            let aevo_handle = self.aevo_client.rest_create_market_order(
+            let aevo_handle = self.aevo_client.rest_create_order(
                 self.instrument_id, 
                 true, 
-                order_amount
+                (self.aevo_state.ask_px * 1.05 * 10_000.0).round() / 10_000.0,  // 5% slippage
+                order_amount, 
+                Some(false), 
+                Some("IOC".to_string())
             ); 
             let hl_handle = self.hl_exchange_client.order(
                 ClientOrderRequest{
@@ -162,7 +182,7 @@ impl XArb {
                     self.aevo_state.sell_open_sz = self.aevo_state.sell_open_sz - amount_filled; 
                     info!("Aevo: Market Buy Order Filled with size : {} and avg price : {:?}", filled, avg_price);
                 }, 
-                Err(e) => error!("Error creating aevo order : {}", e), 
+                Err(e) => panic!("Error creating aevo order : {}", e), 
                 _ => unreachable!()
             }
 
@@ -197,13 +217,16 @@ impl XArb {
                 Err(e) => panic!("Error with placing order: {e}"),
             }
 
-        } else if self.aevo_state.bid_px > self.hl_state.ask_px && self.aevo_state.sell_open_sz < self.max_size{
+        } else if ((self.aevo_state.bid_px - self.hl_state.ask_px) / self.hl_state.ask_px * 10_000.0) > self.min_delta_bps as f64 && self.aevo_state.sell_open_sz < self.max_size {
             let order_amount = self.max_size - self.aevo_state.sell_open_sz; 
-            let aevo_handle = self.aevo_client.rest_create_market_order(
+            let aevo_handle = self.aevo_client.rest_create_order(
                 self.instrument_id, 
                 false, 
-                order_amount
-            ); 
+                (self.aevo_state.bid_px * 0.95 * 10_000.0).round() / 10_000.0,  // 5% slippage
+                order_amount, 
+                Some(false), 
+                Some("IOC".to_string())
+            );
             let hl_handle = self.hl_exchange_client.order(
                 ClientOrderRequest{
                     asset : self.asset.clone(), 
@@ -236,7 +259,7 @@ impl XArb {
                     self.aevo_state.buy_open_sz = self.aevo_state.buy_open_sz - amount_filled; 
                     info!("Aevo: Market Sell Order Filled with size : {} and avg price : {:?}", filled, avg_price);
                 }, 
-                Err(e) => error!("Error creating aevo order : {}", e), 
+                Err(e) => panic!("Error creating aevo order : {}", e), 
                 _ => unreachable!()
             }
 

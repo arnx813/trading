@@ -33,6 +33,7 @@ pub async fn main() {
         "POPCAT".to_string(), 
         100.0, 
         36426,
+        10
     ).await; 
 
     cross_arb.start().await; 
@@ -70,6 +71,7 @@ mod tests {
             true, 
             2400.0, 
             0.01, 
+            None, 
             None
         ).await.unwrap(); 
         let time_after = Utc::now().timestamp_micros();
@@ -91,6 +93,7 @@ mod tests {
             true, 
             2400.0, 
             0.01, 
+            None, 
             None
         ).await.unwrap(); 
         let time_after = Utc::now().timestamp_micros();
@@ -114,7 +117,61 @@ mod tests {
             true, 
             2400.0, 
             0.01, 
+            None, 
             None
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response); 
+
+        match response {
+            RestResponse::CreateOrder { .. } => {
+                println!("The rest order response latency is : {}", time_after - time_before); 
+            }, 
+            _ => {
+                panic!("Not CreateOrder type: {:?}", response)
+            }
+        }
+    }
+
+    #[test]
+    async fn test_aevo_rest_open_market_order() {
+        env_logger::init(); 
+        dotenv().ok();
+        let credentials = ClientCredentials {
+            signing_key : std::env::var("SIGNING_KEY").unwrap(), 
+            wallet_address : std::env::var("WALLET_ADDRESS").unwrap(), 
+            api_secret : std::env::var("API_SECRET").unwrap(), 
+            api_key : std::env::var("API_KEY").unwrap(), 
+            wallet_private_key : None
+        };
+        
+        let mut client = AevoClient::new(Some(credentials), env::ENV::MAINNET).await.unwrap(); 
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let response = client.rest_create_market_order(
+            1, 
+            true,
+            0.01, 
+        ).await.unwrap(); 
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response); 
+
+        match response {
+            RestResponse::CreateOrder { .. } => {
+                println!("The rest order response latency is : {}", time_after - time_before); 
+            }, 
+            _ => {
+                panic!("Not CreateOrder type: {:?}", response)
+            }
+        }
+
+        let time_before = Utc::now().timestamp_micros(); 
+        let response = client.rest_create_market_order(
+            1, 
+            false,
+            0.01, 
         ).await.unwrap(); 
         let time_after = Utc::now().timestamp_micros();
 
@@ -153,6 +210,7 @@ mod tests {
             true, 
             2758.0, 
             0.02, 
+            None, 
             None
         ).await.unwrap(); 
         let time_after = Utc::now().timestamp_micros();

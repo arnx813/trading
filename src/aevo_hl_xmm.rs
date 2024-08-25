@@ -178,6 +178,7 @@ impl XMM {
                         true, 
                         adjusted_bid_px, 
                         self.max_size, 
+                        None, 
                         None
                     )
                     .await
@@ -210,6 +211,7 @@ impl XMM {
                     true, 
                     adjusted_bid_px, 
                     self.max_size, 
+                    None, 
                     None
                     )
                     .await
