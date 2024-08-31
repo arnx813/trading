@@ -9,8 +9,8 @@ use ethers::signers::{LocalWallet, Signer};
 use futures::join;
 use hyperliquid_rust_sdk::{
     ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient as HLExchangeClient,
-    ExchangeDataStatus, ExchangeDataStatuses, ExchangeResponse, ExchangeResponseStatus,
-    InfoClient as HLInfoClient, Message as HlMessage, Subscription, UserData,
+    ExchangeDataStatus, ExchangeResponseStatus, InfoClient as HLInfoClient, Message as HlMessage,
+    Subscription,
 };
 use log::{error, info};
 use std::{sync::Arc, time::Duration};
@@ -121,37 +121,31 @@ impl XArb {
             tokio::select! {
                 msg_count = aevo_rx.recv_many(&mut aevo_buffer, 100) => {
                     if msg_count > 0 {
-                        match aevo_buffer.pop() {
-                            Some(WsResponse::SubscribeResponse {
-                                data: WsResponseData::BookTickerData {tickers, ..},
-                                ..
-                            }) => {
-                                let ticker = &tickers[0];
-                                self.aevo_state.ask_px = ticker.ask.price.parse().unwrap();
-                                self.aevo_state.bid_px = ticker.bid.price.parse().unwrap();
-                                if self.hl_state.ask_px > 0.0 && self.hl_state.bid_px > 0.0 {
-                                    self.submit_orders().await;
-                                }
-                            },
-                            _ => {}
-                        }
+                        if let Some(WsResponse::SubscribeResponse {
+                            data: WsResponseData::BookTickerData {tickers, ..},
+                            ..
+                        }) = aevo_buffer.pop() {
+                            let ticker = &tickers[0];
+                            self.aevo_state.ask_px = ticker.ask.price.parse().unwrap();
+                            self.aevo_state.bid_px = ticker.bid.price.parse().unwrap();
+                            if self.hl_state.ask_px > 0.0 && self.hl_state.bid_px > 0.0 {
+                                self.submit_orders().await;
+                            }
+                        };
                         aevo_buffer.clear();
                     }
                 },
                 msg_count = hl_rx.recv_many(&mut hl_buffer, 100) => {
                     if msg_count > 0 {
-                        match hl_buffer.pop() {
-                            Some(HlMessage::L2Book(l2_book)) => {
-                                let l2_book = l2_book.data;
-                                self.hl_state.ask_px = l2_book.levels[1][0].px.parse().unwrap();
-                                self.hl_state.bid_px = l2_book.levels[0][0].px.parse().unwrap();
+                        if let Some(HlMessage::L2Book(l2_book)) = hl_buffer.pop() {
+                            let l2_book = l2_book.data;
+                            self.hl_state.ask_px = l2_book.levels[1][0].px.parse().unwrap();
+                            self.hl_state.bid_px = l2_book.levels[0][0].px.parse().unwrap();
 
-                                if self.aevo_state.ask_px > 0.0 && self.aevo_state.bid_px > 0.0 {
-                                    self.submit_orders().await;
-                                }
-                            },
-                            _ => {}
-                        }
+                            if self.aevo_state.ask_px > 0.0 && self.aevo_state.bid_px > 0.0 {
+                                self.submit_orders().await;
+                            }
+                        };
                         hl_buffer.clear();
                     }
                 },
@@ -195,8 +189,8 @@ impl XArb {
                     filled, avg_price, ..
                 })) => {
                     let amount_filled = filled.parse::<f64>().unwrap();
-                    self.aevo_state.buy_open_sz = self.aevo_state.buy_open_sz + amount_filled;
-                    self.aevo_state.sell_open_sz = self.aevo_state.sell_open_sz - amount_filled;
+                    self.aevo_state.buy_open_sz += amount_filled;
+                    self.aevo_state.sell_open_sz -= amount_filled;
                     info!(
                         "Aevo: Market Buy Order Filled with size : {} and avg price : {:?}",
                         filled, avg_price
@@ -214,10 +208,8 @@ impl XArb {
                                 match &order.statuses[0] {
                                     ExchangeDataStatus::Filled(order) => {
                                         let amount_filled = order.total_sz.parse::<f64>().unwrap();
-                                        self.hl_state.sell_open_sz =
-                                            self.hl_state.sell_open_sz + amount_filled;
-                                        self.hl_state.buy_open_sz =
-                                            self.hl_state.buy_open_sz - amount_filled;
+                                        self.hl_state.sell_open_sz += amount_filled;
+                                        self.hl_state.buy_open_sz -= amount_filled;
                                         info!("Hyperliquid: Market Sell Order Filled with size : {} and avg price : {}", order.total_sz, order.avg_px);
                                     }
                                     ExchangeDataStatus::Error(e) => {
@@ -276,8 +268,8 @@ impl XArb {
                     filled, avg_price, ..
                 })) => {
                     let amount_filled = filled.parse::<f64>().unwrap();
-                    self.aevo_state.sell_open_sz = self.aevo_state.sell_open_sz + amount_filled;
-                    self.aevo_state.buy_open_sz = self.aevo_state.buy_open_sz - amount_filled;
+                    self.aevo_state.sell_open_sz += amount_filled;
+                    self.aevo_state.buy_open_sz -= amount_filled;
                     info!(
                         "Aevo: Market Sell Order Filled with size : {} and avg price : {:?}",
                         filled, avg_price
@@ -295,10 +287,8 @@ impl XArb {
                                 match &order.statuses[0] {
                                     ExchangeDataStatus::Filled(order) => {
                                         let amount_filled = order.total_sz.parse::<f64>().unwrap();
-                                        self.hl_state.buy_open_sz =
-                                            self.hl_state.buy_open_sz + amount_filled;
-                                        self.hl_state.sell_open_sz =
-                                            self.hl_state.sell_open_sz - amount_filled;
+                                        self.hl_state.buy_open_sz += amount_filled;
+                                        self.hl_state.sell_open_sz -= amount_filled;
                                         info!("Hyperliquid: Market Buy Order Filled with size : {} and avg price : {}", order.total_sz, order.avg_px);
                                     }
                                     ExchangeDataStatus::Error(e) => {
