@@ -141,8 +141,8 @@ impl XArb {
                         self.aevo_state.ask_px = ticker.ask.price.parse().unwrap();
                         self.aevo_state.bid_px = ticker.bid.price.parse().unwrap();
                         info!(
-                            "Aevo task : AEVO STATE : {:?}, HL STATE : {:?}",
-                            self.aevo_state, self.hl_state
+                            "Aevo task : AEVO STATE : {:?}, HL STATE : {:?}, IS LOCKED : {}",
+                            self.aevo_state, self.hl_state, self.is_processing_flag
                         );
 
                         if self.hl_state.ask_px > 0.0 && self.hl_state.bid_px > 0.0 && !self.is_processing_flag {
@@ -172,8 +172,8 @@ impl XArb {
                         self.hl_state.ask_px = l2_book.levels[1][0].px.parse().unwrap();
                         self.hl_state.bid_px = l2_book.levels[0][0].px.parse().unwrap();
                         info!(
-                            "HL Task : AEVO STATE : {:?}, HL STATE : {:?}",
-                            self.aevo_state, self.hl_state
+                            "HL Task : AEVO STATE : {:?}, HL STATE : {:?}, IS LOCKED : {}",
+                            self.aevo_state, self.hl_state, self.is_processing_flag
                         );
 
                         if self.aevo_state.ask_px > 0.0 && self.aevo_state.bid_px > 0.0 && !self.is_processing_flag {
@@ -279,13 +279,13 @@ impl XArb {
         let (aevo_limit_px, hl_limit_px) = {
             if order.aevo_is_buy {
                 (
-                    (order.aevo_px * 1.05 * 10_000.0).round() / 10_000.0,
-                    (order.hl_px * 100_000.0 * 0.95).round() / 100_000.0,
+                    (order.aevo_px * 1.05 * 100.0).round() / 100.0,
+                    (order.hl_px * 10.0 * 0.95).round() / 10.0,
                 )
             } else {
                 (
-                    (order.aevo_px * 0.95 * 10_000.0).round() / 10_000.0,
-                    (order.hl_px * 100_000.0 * 1.05).round() / 100_000.0,
+                    (order.aevo_px * 0.95 * 100.0).round() / 100.0,
+                    (order.hl_px * 10.0 * 1.05).round() / 10.0,
                 )
             }
         };
@@ -322,10 +322,14 @@ impl XArb {
             (self.hl_state.bid_px - self.aevo_state.ask_px) / self.aevo_state.ask_px * 10_000.0;
         let spread_2 =
             (self.aevo_state.bid_px - self.hl_state.ask_px) / self.hl_state.ask_px * 10_000.0;
-        info!("Spread 1 : {}, Spread 2 : {}", spread_1, spread_2);
+        info!("Spread 1 : {:.4}, Spread 2 : {:.4}", spread_1, spread_2);
 
         if spread_1 > self.min_delta_bps as f64 && self.aevo_state.buy_open_sz < self.max_size {
-            let order_amount = self.max_size - self.aevo_state.buy_open_sz;
+            let order_amount = if self.aevo_state.buy_open_sz >= 0.0 {
+                self.max_size - self.aevo_state.buy_open_sz
+            } else {
+                -self.aevo_state.buy_open_sz
+            }; 
             Some(ArbOrder {
                 aevo_is_buy: true,
                 aevo_px: self.aevo_state.ask_px,
@@ -338,7 +342,12 @@ impl XArb {
         } else if spread_2 > self.min_delta_bps as f64
             && self.aevo_state.sell_open_sz < self.max_size
         {
-            let order_amount = self.max_size - self.aevo_state.sell_open_sz;
+            let order_amount = if self.aevo_state.sell_open_sz >= 0.0 {
+                self.max_size - self.aevo_state.sell_open_sz
+            } else {
+                -self.aevo_state.sell_open_sz
+            };
+            //let order_amount = self.max_size - self.aevo_state.sell_open_sz;
             Some(ArbOrder {
                 aevo_is_buy: false,
                 aevo_px: self.aevo_state.bid_px,

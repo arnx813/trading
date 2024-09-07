@@ -4,17 +4,6 @@ use aevo_rust_sdk::aevo::{AevoClient, ClientCredentials};
 use dotenv::dotenv;
 mod aevo_hl_arb;
 mod aevo_hl_xmm;
-use log::{LevelFilter, SetLoggerError};
-use log4rs::{
-    append::{
-        console::{ConsoleAppender, Target},
-        file::FileAppender,
-    },
-    config::{Appender, Root},
-    encode::pattern::PatternEncoder,
-    filter::threshold::ThresholdFilter,
-    Config,
-};
 
 pub struct HLCredentials {
     pub api_key: String,
@@ -43,9 +32,9 @@ pub async fn main() {
         aevo_credentials,
         hl_credentials,
         "ETH".to_string(),
-        100.0,
+        0.05,
         1,
-        10,
+        0,
     )
     .await;
 

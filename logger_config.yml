@@ -2,7 +2,7 @@ appenders:
   stdout: 
     kind: console
     encoder: 
-      pattern: "{h({l})} - {m}\n"
+      pattern: "{h({l})} - {d(%Y-%m-%d %H:%M:%S)} - {m}\n"
     filters: 
       - kind: threshold
         level: info
@@ -10,7 +10,7 @@ appenders:
     kind: file
     path: logs/arb.log
     encoder:
-      pattern: "{l} - {m}\n"
+      pattern: "{l} - {d(%Y-%m-%d %H:%M:%S)} - {m}\n"
 
 root: 
   level: debug
