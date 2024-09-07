@@ -1,0 +1,19 @@
+appenders:
+  stdout: 
+    kind: console
+    encoder: 
+      pattern: "{h({l})} - {m}\n"
+    filters: 
+      - kind: threshold
+        level: info
+  file: 
+    kind: file
+    path: logs/arb.log
+    encoder:
+      pattern: "{l} - {m}\n"
+
+root: 
+  level: debug
+  appenders:
+    - stdout
+    - file

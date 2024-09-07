@@ -4,21 +4,17 @@ use aevo_rust_sdk::{
     rest::{OrderData, RestResponse},
     ws_structs::{BookTicker, Fill, WsResponse, WsResponseData},
 };
-use dotenv::dotenv;
-use env_logger;
 use ethers::signers::{LocalWallet, Signer};
 use eyre::{eyre, Result};
 use futures::{SinkExt, StreamExt};
 use hyperliquid_rust_sdk::{
     ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient as HLExchangeClient,
-    ExchangeDataStatus, ExchangeDataStatuses, ExchangeResponse, ExchangeResponseStatus,
-    InfoClient as HLInfoClient, Message as HlMessage, Subscription, UserData,
+    ExchangeDataStatus, ExchangeResponseStatus,
+    InfoClient as HLInfoClient, Message as HlMessage, Subscription,
 };
 use log::{error, info};
-use reqwest;
 use serde_derive::{Deserialize, Serialize};
-use std::{self, char::MAX, sync::Arc};
-use tokio::sync::{broadcast::error, Mutex};
+use std::sync::Arc;
 use tokio::{join, sync::mpsc};
 
 use crate::HLCredentials;

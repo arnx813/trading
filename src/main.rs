@@ -4,6 +4,17 @@ use aevo_rust_sdk::aevo::{AevoClient, ClientCredentials};
 use dotenv::dotenv;
 mod aevo_hl_arb;
 mod aevo_hl_xmm;
+use log::{LevelFilter, SetLoggerError};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+    Config,
+};
 
 pub struct HLCredentials {
     pub api_key: String,
@@ -12,7 +23,8 @@ pub struct HLCredentials {
 
 #[tokio::main]
 pub async fn main() {
-    env_logger::init();
+    let _ = log4rs::init_file("logger_config.yml", Default::default()).unwrap();
+
     dotenv().ok();
     let aevo_credentials = ClientCredentials {
         signing_key: std::env::var("SIGNING_KEY").unwrap(),
@@ -30,9 +42,9 @@ pub async fn main() {
     let mut cross_arb = XArb::new(
         aevo_credentials,
         hl_credentials,
-        "POPCAT".to_string(),
+        "ETH".to_string(),
         100.0,
-        36426,
+        1,
         10,
     )
     .await;
