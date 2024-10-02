@@ -2553,8 +2553,7 @@ dependencies = [
 [[package]]
 name = "hyperliquid_rust_sdk"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab33efbbf06ecf350f2c1bc596e97d5237f64d7623272d725c8248c4b9ab2cdc"
+source = "git+https://github.com/khaidarkairbek/hyperliquid-rust-sdk.git?rev=ba7311012700ba60eac1ed05a63aeab6fab7b6c7#ba7311012700ba60eac1ed05a63aeab6fab7b6c7"
 dependencies = [
  "chrono",
  "env_logger 0.10.2",
@@ -5031,6 +5030,7 @@ dependencies = [
  "ethers",
  "eyre",
  "futures",
+ "futures-util",
  "hyperliquid_rust_sdk",
  "log",
  "log4rs",
@@ -5039,7 +5039,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tokio",
- "tokio-tungstenite 0.23.1",
+ "tokio-tungstenite 0.20.1",
 ]
 
 [[package]]

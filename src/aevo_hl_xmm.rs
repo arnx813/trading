@@ -9,8 +9,8 @@ use eyre::{eyre, Result};
 use futures::{SinkExt, StreamExt};
 use hyperliquid_rust_sdk::{
     ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient as HLExchangeClient,
-    ExchangeDataStatus, ExchangeResponseStatus,
-    InfoClient as HLInfoClient, Message as HlMessage, Subscription,
+    ExchangeDataStatus, ExchangeResponseStatus, InfoClient as HLInfoClient, Message as HlMessage,
+    Subscription,
 };
 use log::{error, info};
 use serde_derive::{Deserialize, Serialize};

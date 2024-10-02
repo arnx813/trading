@@ -8,7 +8,7 @@ appenders:
         level: info
   file: 
     kind: file
-    path: logs/arb.log
+    path: logs/mm.log
     encoder:
       pattern: "{l} - {d(%Y-%m-%d %H:%M:%S)} - {m}\n"
 

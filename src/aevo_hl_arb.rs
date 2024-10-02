@@ -329,7 +329,7 @@ impl XArb {
                 self.max_size - self.aevo_state.buy_open_sz
             } else {
                 -self.aevo_state.buy_open_sz
-            }; 
+            };
             Some(ArbOrder {
                 aevo_is_buy: true,
                 aevo_px: self.aevo_state.ask_px,

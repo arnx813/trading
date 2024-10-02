@@ -1,13 +1,16 @@
 use aevo_hl_arb::XArb;
 use aevo_hl_xmm::XMM;
-use aevo_rust_sdk::aevo::{AevoClient, ClientCredentials};
+use aevo_rust_sdk::aevo::ClientCredentials;
 use dotenv::dotenv;
+use hl_mm::MM;
 mod aevo_hl_arb;
 mod aevo_hl_xmm;
+mod hl_mm;
 
 pub struct HLCredentials {
     pub api_key: String,
     pub api_wallet_address: String,
+    pub wallet_address: String,
 }
 
 #[tokio::main]
@@ -26,19 +29,26 @@ pub async fn main() {
     let hl_credentials = HLCredentials {
         api_key: std::env::var("HL_API_PRIVATE_KEY").unwrap(),
         api_wallet_address: std::env::var("HL_API_WALLET_ADDRESS").unwrap(),
+        wallet_address: std::env::var("WALLET_ADDRESS").unwrap(),
     };
 
+    let mut mm = MM::new(hl_credentials, 5, 3).await;
+
+    mm.start("SUI".to_string(), 30.0, 4).await;
+    /*
     let mut cross_arb = XArb::new(
         aevo_credentials,
         hl_credentials,
         "ETH".to_string(),
         0.05,
         1,
-        0,
+        10,
     )
     .await;
 
     cross_arb.start().await;
+
+     */
 }
 
 #[cfg(test)]
@@ -54,16 +64,12 @@ mod tests {
     use env_logger;
     use ethers::signers::LocalWallet;
     use hyperliquid_rust_sdk::{
-        ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, InfoClient, Message,
-        Subscription,
+        ClientLimit, ClientModifyRequest, ClientOrder, ClientOrderRequest, ExchangeClient,
+        InfoClient,
     };
     use log::{error, info};
     use std::{sync::Arc, time::Duration};
-    use tokio::{
-        sync::{broadcast::error, mpsc},
-        test,
-        time::sleep,
-    };
+    use tokio::{sync::mpsc, test, time::sleep};
 
     #[test]
     async fn test_aevo_rest_open_order() {
@@ -379,6 +385,48 @@ mod tests {
         println!("Response: {:?}", response);
         println!(
             "The rest order creation latency is : {}",
+            time_after - time_before
+        );
+    }
+
+    #[test]
+    async fn test_hl_rest_modify_order() {
+        env_logger::init();
+        dotenv().ok();
+
+        let hl_signer: LocalWallet = std::env::var("HL_API_PRIVATE_KEY")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut client = ExchangeClient::new(None, hl_signer, None, None, None)
+            .await
+            .unwrap();
+
+        let time_before = Utc::now().timestamp_micros();
+        let response = client
+            .modify(
+                ClientModifyRequest {
+                    oid: 39651711400,
+                    order: ClientOrderRequest {
+                        asset: "SUI".to_string(),
+                        is_buy: true,
+                        reduce_only: false,
+                        limit_px: 0.7501,
+                        sz: 20.0,
+                        cloid: None,
+                        order_type: ClientOrder::Limit(ClientLimit {
+                            tif: "Gtc".to_string(), // market order is agressive limit order with IOC TIF
+                        }),
+                    },
+                },
+                None,
+            )
+            .await;
+        let time_after = Utc::now().timestamp_micros();
+
+        println!("Response: {:?}", response);
+        println!(
+            "The rest order modify latency is : {}",
             time_after - time_before
         );
     }

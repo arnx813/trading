@@ -8,7 +8,7 @@ git-fetch-with-cli = true
 
 [dependencies]
 aevo-rust-sdk = { git = "https://github.com/khaidarkairbek/aevo-rust-sdk.git", rev = "4de105b0076a42a0f1477982cfdeb59bb52ecbd7"}
-tokio-tungstenite = { version = "0.23.1", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.20.0", features = ["native-tls"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 reqwest = { version = "0.12.5", features = ["json"] }
@@ -19,7 +19,8 @@ eyre = "0.6.12"
 serde_derive = "1.0.204"
 serde_json = "1.0.122"
 serde = "1.0.204"
-hyperliquid_rust_sdk = "0.5.0"
+hyperliquid_rust_sdk = { git = "https://github.com/khaidarkairbek/hyperliquid-rust-sdk.git", rev = "ba7311012700ba60eac1ed05a63aeab6fab7b6c7"}
 ethers = "2.0.14"
 chrono = { version = "0.4.38", features = ["serde"] }
 log4rs = "=1.3.0"
+futures-util = "0.3.30"
